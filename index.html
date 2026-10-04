@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Generador de prismas</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; display: flex; flex-wrap: wrap; gap: 24px; padding: 24px; box-sizing: border-box; min-height: 100vh; align-content: center; justify-content: center; background: #f6f7f9; color: #222; }
+  form { display: grid; gap: 12px; min-width: 260px; align-content: start; background: #fff; padding: 16px; border-radius: 8px; box-shadow: 0 1px 3px #0002; }
+  label { display: grid; gap: 4px; font-size: 14px; }
+  label.row { display: flex; align-items: center; gap: 8px; }
+  output { font-weight: 600; }
+  #stage { flex: 1; min-width: 300px; background: #fff; border-radius: 8px; box-shadow: 0 1px 3px #0002; display: grid; place-items: center; padding: 16px; }
+  #stage svg { max-width: 100%; height: auto; max-height: 80vh; }
+  button { padding: 8px; font-size: 14px; cursor: pointer; }
+</style>
+</head>
+<body>
+<form id="f" oninput="draw()">
+  <label>Ancho: <output id="ow"></output><input type="range" id="w" min="1" max="20" step="1" value="4"></label>
+  <label>Alto: <output id="oh"></output><input type="range" id="h" min="1" max="20" step="1" value="3"></label>
+  <label>Profundidad: <output id="od"></output><input type="range" id="d" min="1" max="20" step="1" value="2"></label>
+  <label>Unidad
+    <select id="u"><option>mm</option><option selected>cm</option><option>dm</option><option>m</option><option>km</option></select>
+  </label>
+  <label class="row"><input type="checkbox" id="cubes" checked onchange="setStep()"> Dibujar en cubos</label>
+  <label class="row"><input type="checkbox" id="hand" oninput="seed = newSeed()"> Estilo a mano</label>
+  <label>Letra central <input type="text" id="letter" maxlength="3" value="A"></label>
+  <button type="button" onclick="exportPng()">Exportar PNG (fondo transparente)</button>
+  <button type="button" onclick="exportSvg()">Exportar SVG</button>
+</form>
+<div id="stage"></div>
+
+<script src="lib/rough.js"></script>
+<script src="lib/excalifont.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const K = 0.5, C45 = Math.SQRT1_2;          // oblique projection: depth at 45°, half scale
+// Random wobble picked when "Estilo a mano" is checked, then kept so sliders don't make lines jitter.
+const newSeed = () => 1 + Math.floor(Math.random() * 2 ** 31);
+let seed = newSeed();
+
+function setStep() {
+  const cubes = $('cubes').checked;
+  for (const id of ['w', 'h', 'd']) {
+    const el = $(id);
+    el.step = cubes ? 1 : 0.5;
+    el.min = cubes ? 1 : 0.5;
+    if (cubes) el.value = Math.max(1, Math.round(el.value));
+  }
+  draw();
+}
+
+function draw() {
+  const w = +$('w').value, h = +$('h').value, d = +$('d').value, u = $('u').value;
+  const cubes = $('cubes').checked, hand = $('hand').checked, letter = $('letter').value;
+  $('ow').textContent = `${w} ${u}`; $('oh').textContent = `${h} ${u}`; $('od').textContent = `${d} ${u}`;
+
+  const s = 300 / Math.max(w + d * K * C45, h + d * K * C45);  // px per unit
+  const W = w * s, H = h * s, dx = d * s * K * C45, dy = dx;
+  const M = 60, ox = M, fy = M + dy;                           // front face top-left = (ox, fy)
+  const vw = W + dx + 2 * M, vh = H + dy + 2 * M;
+
+  const faces = [
+    ['#e8f0f8', [[ox, fy], [ox + W, fy], [ox + W + dx, fy - dy], [ox + dx, fy - dy]]],              // top
+    ['#b4bcc6', [[ox + W, fy], [ox + W + dx, fy - dy], [ox + W + dx, fy + H - dy], [ox + W, fy + H]]], // side
+    ['#dfe9f4', [[ox, fy], [ox + W, fy], [ox + W, fy + H], [ox, fy + H]]],                          // front
+  ];
+  const lines = [];
+  if (cubes) {
+    const ux = dx / d, uy = dy / d;
+    for (let i = 1; i < w; i++) {
+      const x = ox + i * s;
+      lines.push([x, fy, x, fy + H], [x, fy, x + dx, fy - dy]);           // front verticals + top depth lines
+    }
+    for (let j = 1; j < h; j++) {
+      const y = fy + j * s;
+      lines.push([ox, y, ox + W, y], [ox + W, y, ox + W + dx, y - dy]);   // front horizontals + side depth lines
+    }
+    for (let k = 1; k < d; k++) {
+      const x = ox + k * ux, y = fy - k * uy;
+      lines.push([x, y, x + W, y], [x + W, y, x + W, y + H]);             // top width lines + side verticals
+    }
+  }
+
+  const g = 10, fs = hand ? 20 : 16;
+  const mx = ox + W + dx / 2 + C45 * g, my = fy + H - dy / 2 + C45 * g;  // depth label: edge midpoint pushed outward
+  const lfs = Math.max(14, Math.min(90, Math.min(W, H) * 0.5));
+  const font = hand ? 'font-family="Excalifont"' : 'font-family="Arial, Helvetica, sans-serif" font-weight="bold"';
+  // Font embedded in the SVG itself so the exported file renders the same anywhere, offline.
+  const style = hand ? `<style>@font-face{font-family:Excalifont;src:url(data:font/woff2;base64,${EXCALIFONT_B64}) format("woff2")}</style>` : '';
+  const shapes = hand ? '' :
+    `<g stroke="#222" stroke-width="2" stroke-linejoin="round">${faces.map(([c, p]) => `<polygon fill="${c}" points="${p.join(' ')}"/>`).join('')}</g>` +
+    `<g stroke="#222" stroke-width="1">${lines.map(([x1, y1, x2, y2]) => `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`).join('')}</g>`;
+
+  $('stage').innerHTML = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${vw} ${vh}" width="${vw}" height="${vh}">
+  ${style}
+  <g id="shapes">${shapes}</g>
+  ${letter ? `<text x="${ox + W / 2}" y="${fy + H / 2}" ${font} font-size="${lfs}" text-anchor="middle" dominant-baseline="central" fill="#111" stroke="#dfe9f4" stroke-width="${cubes ? 6 : 0}" paint-order="stroke">${esc(letter)}</text>` : ''}
+  <g ${font.replace(' font-weight="bold"', '')} font-size="${fs}" fill="#222">
+    <text x="${ox + W / 2}" y="${fy + H + g}" text-anchor="middle" dominant-baseline="hanging">${w} ${u}</text>
+    <text x="${ox - g}" y="${fy + H / 2}" text-anchor="middle" transform="rotate(-90 ${ox - g} ${fy + H / 2})">${h} ${u}</text>
+    <text x="${mx}" y="${my}" text-anchor="middle" dominant-baseline="hanging" transform="rotate(-45 ${mx} ${my})">${d} ${u}</text>
+  </g>
+</svg>`;
+
+  if (hand) {
+    const svg = $('stage').querySelector('svg'), rc = rough.svg(svg), out = svg.querySelector('#shapes');
+    // Same roughness everywhere; seed + n gives each stroke its own wobble, stable across redraws.
+    let n = 0;
+    const opt = w => ({ stroke: '#222', fillStyle: 'solid', roughness: 1, strokeWidth: w, seed: seed + n++ });
+    for (const [c, p] of faces) out.append(rc.polygon(p, { ...opt(2), fill: c }));
+    for (const [x1, y1, x2, y2] of lines) out.append(rc.line(x1, y1, x2, y2, opt(1)));
+  }
+}
+
+const esc = t => t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function download(blob, ext) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `prisma-${$('letter').value || 'figura'}-${$('w').value}x${$('h').value}x${$('d').value}${$('u').value}.${ext}`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+const svgBlob = () => new Blob([$('stage').innerHTML.trim()], { type: 'image/svg+xml' });
+
+function exportSvg() { download(svgBlob(), 'svg'); }
+
+function exportPng() {
+  const svg = $('stage').querySelector('svg'), k = 4;  // ~1700 px wide: sharp full-screen, ~14 cm printed at 300 dpi
+  const img = new Image(), url = URL.createObjectURL(svgBlob());
+  img.onload = () => {
+    const c = document.createElement('canvas');
+    c.width = svg.width.baseVal.value * k;
+    c.height = svg.height.baseVal.value * k;
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);  // vector rasterized at k×, canvas starts transparent
+    URL.revokeObjectURL(url);
+    c.toBlob(b => download(b, 'png'));
+  };
+  img.src = url;
+}
+
+setStep();
+</script>
+</body>
+</html>
