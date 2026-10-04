@@ -1,5 +1,7 @@
 # Generador de prismas
 
+**Demo:** https://1382308.github.io/cube-prism-gen/
+
 Herramienta web para dibujar prismas rectangulares (opcionalmente divididos en cubos unitarios) en proyección oblicua, con estilo normal o "a mano", y exportarlos como PNG (fondo transparente) o SVG.
 
 ![Captura](Screenshot.png)
