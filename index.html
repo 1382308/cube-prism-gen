@@ -5,7 +5,21 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Generador de prismas</title>
 <style>
-  body { font-family: system-ui, sans-serif; margin: 0; display: flex; flex-wrap: wrap; gap: 24px; padding: 24px; box-sizing: border-box; min-height: 100vh; align-content: center; justify-content: center; background: #f6f7f9; color: #222; }
+  body { font-family: system-ui, sans-serif; margin: 0; display: flex; flex-direction: column; min-height: 100vh; background: #f6f7f9; color: #222; }
+  #bar { display: flex; flex-wrap: wrap; gap: 8px 20px; justify-content: center; padding: 10px 16px; background: #fff; box-shadow: 0 1px 4px #0002; }
+  #bar .grp { display: grid; gap: 4px; }
+  #bar .grp > span { font-size: 12px; color: #555; }
+  #bar .opts { display: flex; gap: 4px; align-items: center; }
+  #bar.off .sloppy { opacity: .4; pointer-events: none; }
+  .opt { width: 32px; height: 32px; padding: 0; display: grid; place-items: center; border: 1px solid transparent; border-radius: 8px; background: #f1f0ff; color: #1b1b1f; cursor: pointer; }
+  .opt:hover { background: #e4e2ff; }
+  .opt.on { background: #e0dfff; border-color: #6965db; }
+  .opt svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .sw { width: 24px; height: 24px; border-radius: 6px; border: 1px solid #0003; cursor: pointer; padding: 0; }
+  .sw.on { outline: 2px solid #6965db; outline-offset: 1px; }
+  .sw.none { background: repeating-conic-gradient(#ccc 0 25%, #fff 0 50%) 0 0/8px 8px; }
+  #bar input[type=color] { width: 28px; height: 28px; padding: 0; border: 1px solid #0003; border-radius: 6px; background: none; cursor: pointer; }
+  main { flex: 1; display: flex; flex-wrap: wrap; gap: 24px; padding: 24px; align-content: center; justify-content: center; }
   form { display: grid; gap: 12px; min-width: 260px; align-content: start; background: #fff; padding: 16px; border-radius: 8px; box-shadow: 0 1px 3px #0002; }
   label { display: grid; gap: 4px; font-size: 14px; }
   label.row { display: flex; align-items: center; gap: 8px; }
@@ -13,9 +27,15 @@
   #stage { flex: 1; min-width: 300px; background: #fff; border-radius: 8px; box-shadow: 0 1px 3px #0002; display: grid; place-items: center; padding: 16px; }
   #stage svg { max-width: 100%; height: auto; max-height: 80vh; }
   button { padding: 8px; font-size: 14px; cursor: pointer; }
+  .opt, .sw { font-size: 0; }
 </style>
 </head>
 <body>
+<div id="bar">
+  <input type="hidden" id="stroke" value="#1e1e1e"><input type="hidden" id="bg" value="#dfe9f4"><input type="hidden" id="fill" value="solid">
+  <input type="hidden" id="sw" value="2"><input type="hidden" id="ss" value="solid"><input type="hidden" id="sloppy" value="1">
+</div>
+<main>
 <form id="f" oninput="draw()">
   <label>Ancho: <output id="ow"></output><input type="range" id="w" min="1" max="20" step="1" value="4"></label>
   <label>Alto: <output id="oh"></output><input type="range" id="h" min="1" max="20" step="1" value="3"></label>
@@ -28,11 +48,14 @@
   <label>Letra central <input type="text" id="letter" maxlength="3" value="A"></label>
   <button type="button" onclick="exportPng()">Exportar PNG (fondo transparente)</button>
   <button type="button" onclick="exportSvg()">Exportar SVG</button>
+  <button type="button" id="gifBtn" onclick="exportGif()">Exportar GIF animado (estilo a mano)</button>
 </form>
 <div id="stage"></div>
+</main>
 
 <script src="lib/rough.js"></script>
 <script src="lib/excalifont.js"></script>
+<script src="lib/gifenc.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 const K = 0.5, C45 = Math.SQRT1_2;          // oblique projection: depth at 45°, half scale
@@ -54,6 +77,7 @@ function setStep() {
 function draw() {
   const w = +$('w').value, h = +$('h').value, d = +$('d').value, u = $('u').value;
   const cubes = $('cubes').checked, hand = $('hand').checked, letter = $('letter').value;
+  const stroke = $('stroke').value, sw = +$('sw').value;
   $('ow').textContent = `${w} ${u}`; $('oh').textContent = `${h} ${u}`; $('od').textContent = `${d} ${u}`;
 
   const s = 300 / Math.max(w + d * K * C45, h + d * K * C45);  // px per unit
@@ -61,10 +85,13 @@ function draw() {
   const M = 60, ox = M, fy = M + dy;                           // front face top-left = (ox, fy)
   const vw = W + dx + 2 * M, vh = H + dy + 2 * M;
 
+  const bg = $('bg').value;
+  const mix = (hex, to, t) => '#' + [1, 3, 5].map(i => Math.round(parseInt(hex.substr(i, 2), 16) * (1 - t) + to * t).toString(16).padStart(2, '0')).join('');
+  const tr = bg === 'transparent';                                          // transparent: no face fill, no letter halo
   const faces = [
-    ['#e8f0f8', [[ox, fy], [ox + W, fy], [ox + W + dx, fy - dy], [ox + dx, fy - dy]]],              // top
-    ['#b4bcc6', [[ox + W, fy], [ox + W + dx, fy - dy], [ox + W + dx, fy + H - dy], [ox + W, fy + H]]], // side
-    ['#dfe9f4', [[ox, fy], [ox + W, fy], [ox + W, fy + H], [ox, fy + H]]],                          // front
+    [tr ? null : mix(bg, 255, 0.35), [[ox, fy], [ox + W, fy], [ox + W + dx, fy - dy], [ox + dx, fy - dy]]],              // top: lighter
+    [tr ? null : mix(bg, 0, 0.25), [[ox + W, fy], [ox + W + dx, fy - dy], [ox + W + dx, fy + H - dy], [ox + W, fy + H]]], // side: darker
+    [tr ? null : bg, [[ox, fy], [ox + W, fy], [ox + W, fy + H], [ox, fy + H]]],                                         // front
   ];
   const lines = [];
   if (cubes) {
@@ -89,30 +116,27 @@ function draw() {
   const font = hand ? 'font-family="Excalifont"' : 'font-family="Arial, Helvetica, sans-serif" font-weight="bold"';
   // Font embedded in the SVG itself so the exported file renders the same anywhere, offline.
   const style = hand ? `<style>@font-face{font-family:Excalifont;src:url(data:font/woff2;base64,${EXCALIFONT_B64}) format("woff2")}</style>` : '';
-  const shapes = hand ? '' :
-    `<g stroke="#222" stroke-width="2" stroke-linejoin="round">${faces.map(([c, p]) => `<polygon fill="${c}" points="${p.join(' ')}"/>`).join('')}</g>` +
-    `<g stroke="#222" stroke-width="1">${lines.map(([x1, y1, x2, y2]) => `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`).join('')}</g>`;
-
   $('stage').innerHTML = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${vw} ${vh}" width="${vw}" height="${vh}">
   ${style}
-  <g id="shapes">${shapes}</g>
-  ${letter ? `<text x="${ox + W / 2}" y="${fy + H / 2}" ${font} font-size="${lfs}" text-anchor="middle" dominant-baseline="central" fill="#111" stroke="#dfe9f4" stroke-width="${cubes ? 6 : 0}" paint-order="stroke">${esc(letter)}</text>` : ''}
-  <g ${font.replace(' font-weight="bold"', '')} font-size="${fs}" fill="#222">
+  <g id="shapes" stroke-linecap="round" stroke-linejoin="round"></g>
+  ${letter ? `<text x="${ox + W / 2}" y="${fy + H / 2}" ${font} font-size="${lfs}" text-anchor="middle" dominant-baseline="central" fill="${stroke}" stroke="${tr ? 'none' : bg}" stroke-width="${cubes && !tr ? 6 : 0}" paint-order="stroke">${esc(letter)}</text>` : ''}
+  <g ${font.replace(' font-weight="bold"', '')} font-size="${fs}" fill="${stroke}">
     <text x="${ox + W / 2}" y="${fy + H + g}" text-anchor="middle" dominant-baseline="hanging">${w} ${u}</text>
     <text x="${ox - g}" y="${fy + H / 2}" text-anchor="middle" transform="rotate(-90 ${ox - g} ${fy + H / 2})">${h} ${u}</text>
     <text x="${mx}" y="${my}" text-anchor="middle" dominant-baseline="hanging" transform="rotate(-45 ${mx} ${my})">${d} ${u}</text>
   </g>
 </svg>`;
 
-  if (hand) {
-    const svg = $('stage').querySelector('svg'), rc = rough.svg(svg), out = svg.querySelector('#shapes');
-    // Same roughness everywhere; seed + n gives each stroke its own wobble, stable across redraws.
-    let n = 0;
-    const opt = w => ({ stroke: '#222', fillStyle: 'solid', roughness: 1, strokeWidth: w, seed: seed + n++ });
-    for (const [c, p] of faces) out.append(rc.polygon(p, { ...opt(2), fill: c }));
-    for (const [x1, y1, x2, y2] of lines) out.append(rc.line(x1, y1, x2, y2, opt(1)));
-  }
+  $('gifBtn').disabled = !hand;
+  $('bar').classList.toggle('off', !hand);                                 // without "Estilo a mano" lines are clean (architect)
+  const svg = $('stage').querySelector('svg'), rc = rough.svg(svg), out = svg.querySelector('#shapes');
+  // seed + n gives each stroke its own wobble, stable across redraws.
+  let n = 0;
+  const dash = { solid: undefined, dashed: [10, 8], dotted: [0.1, 4 + 2 * sw] }[$('ss').value];
+  const opt = w => ({ stroke, strokeWidth: w, roughness: hand ? +$('sloppy').value : 0, strokeLineDash: dash, seed: seed + n++ });
+  for (const [c, p] of faces) out.append(rc.polygon(p, { ...opt(sw), fill: c || undefined, fillStyle: $('fill').value, fillWeight: sw / 2, hachureGap: sw * 4 }));
+  for (const [x1, y1, x2, y2] of lines) out.append(rc.line(x1, y1, x2, y2, opt(Math.max(1, sw / 2))));
 }
 
 const esc = t => t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -129,19 +153,136 @@ const svgBlob = () => new Blob([$('stage').innerHTML.trim()], { type: 'image/svg
 
 function exportSvg() { download(svgBlob(), 'svg'); }
 
-function exportPng() {
-  const svg = $('stage').querySelector('svg'), k = 4;  // ~1700 px wide: sharp full-screen, ~14 cm printed at 300 dpi
-  const img = new Image(), url = URL.createObjectURL(svgBlob());
-  img.onload = () => {
-    const c = document.createElement('canvas');
-    c.width = svg.width.baseVal.value * k;
-    c.height = svg.height.baseVal.value * k;
-    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);  // vector rasterized at k×, canvas starts transparent
-    URL.revokeObjectURL(url);
-    c.toBlob(b => download(b, 'png'));
-  };
-  img.src = url;
+// Rasterize the current stage SVG at k× onto a canvas (starts transparent).
+function toCanvas(k) {
+  const svg = $('stage').querySelector('svg'), img = new Image(), url = URL.createObjectURL(svgBlob());
+  return new Promise(res => {
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = svg.width.baseVal.value * k;
+      c.height = svg.height.baseVal.value * k;
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      res(c);
+    };
+    img.src = url;
+  });
 }
+
+// ~1700 px wide: sharp full-screen, ~14 cm printed at 300 dpi
+async function exportPng() { (await toCanvas(4)).toBlob(b => download(b, 'png')); }
+
+const clamp01 = x => Math.min(1, Math.max(0, x));
+
+// Stroke-reveal at progress p (0..1): each shape starts a bit after the previous one; text fades in last.
+function reveal(p) {
+  const paths = [...$('stage').querySelectorAll('#shapes path')];
+  paths.forEach((el, i) => {
+    const t = clamp01((p - (i / paths.length) * 0.6) / 0.4);
+    if (el.getAttribute('stroke') === 'none') { el.style.opacity = t; return; }   // fill layer fades in
+    if (t >= 1) { el.style.strokeDasharray = el.style.strokeDashoffset = ''; return; }   // done: back to the real stroke style
+    const len = el.getTotalLength();
+    el.style.strokeDasharray = len;
+    el.style.strokeDashoffset = len * (1 - t);
+  });
+  $('stage').querySelectorAll('svg > text, svg > g:not(#shapes)').forEach(el => el.style.opacity = clamp01((p - 0.7) / 0.3));
+}
+
+// GIF = hand-drawn reveal, then "line boil": 4 wobble variants cycled at ~8 fps.
+async function exportGif() {
+  const btn = $('gifBtn'), label = btn.textContent, saved = seed, k = 2;  // 2×: GIFs get heavy fast
+  btn.disabled = true;
+  const gif = gifenc.GIFEncoder();
+  const frame = async (delay) => {
+    const c = await toCanvas(k), { data } = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+    for (let i = 3; i < data.length; i += 4) {                            // GIF alpha is on/off: snap it ourselves, else faint pixels map to dark palette entries
+      const on = data[i] >= 128;
+      data[i] = on ? 255 : 0;
+      if (!on) data[i - 1] = data[i - 2] = data[i - 3] = 0;
+    }
+    const palette = gifenc.quantize(data, 256, { format: 'rgba4444' });
+    return { index: gifenc.applyPalette(data, palette, 'rgba4444'), palette, w: c.width, h: c.height, delay };
+  };
+  const write = f => gif.writeFrame(f.index, f.w, f.h, {
+    palette: f.palette, delay: f.delay, dispose: 2,                      // dispose 2: clear before next frame so transparency doesn't smear
+    transparent: true, transparentIndex: Math.max(0, f.palette.findIndex(c => c[3] === 0)),
+  });
+  try {
+    const R = 14, boil = [];
+    for (let i = 1; i <= R; i++) {
+      btn.textContent = `Generando… ${i}/${R + 4}`;
+      draw(); reveal(i / R);                                              // same seed during reveal: shape doesn't change while drawing
+      write(await frame(i === R ? 400 : 70));
+    }
+    for (let j = 0; j < 4; j++) {
+      btn.textContent = `Generando… ${R + j + 1}/${R + 4}`;
+      seed = saved + 1000 * (j + 1); draw();
+      boil.push(await frame(125));
+    }
+    for (let r = 0; r < 3; r++) boil.forEach(write);
+    gif.finish();
+    download(new Blob([gif.bytes()], { type: 'image/gif' }), 'gif');
+  } finally {
+    seed = saved; draw(); btn.textContent = label; btn.disabled = false;
+  }
+}
+
+
+// Excalidraw-style top bar. Each control writes its value to a hidden input (read by draw()).
+const I = d => `<svg viewBox="0 0 24 24">${d}</svg>`;
+const BOX = '<rect x="4" y="4" width="16" height="16" rx="2"/>';
+const GROUPS = [
+  ['stroke', 'Trazo', ['#1e1e1e', '#e03131', '#2f9e44', '#1971c2', '#f08c00']],
+  ['bg', 'Fondo', ['transparent', '#ffc9c9', '#b2f2bb', '#a5d8ff', '#ffec99']],
+  ['fill', 'Relleno', [
+    ['hachure', 'Rayado', I(BOX + '<path d="M4 14L14 4M4 20L20 4M10 20L20 10"/>')],
+    ['cross-hatch', 'Rayado cruzado', I(BOX + '<path d="M4 14L14 4M4 20L20 4M10 20L20 10M10 4L20 14M4 4L20 20M4 10L14 20"/>')],
+    ['solid', 'Sólido', I('<rect x="4" y="4" width="16" height="16" rx="2" fill="currentColor"/>')],
+    ['zigzag', 'Zigzag', I(BOX + '<path d="M5 9l4-4 3 3 4-4M5 15l7-7 3 3 5-5M5 20l15-15"/>')]]],
+  ['sw', 'Grosor del trazo', [
+    ['1', 'Fino', I('<path d="M4 12H20" stroke-width="1.5"/>')],
+    ['2', 'Grueso', I('<path d="M4 12H20" stroke-width="3"/>')],
+    ['4', 'Extra grueso', I('<path d="M4 12H20" stroke-width="5"/>')]]],
+  ['ss', 'Estilo del trazo', [
+    ['solid', 'Continuo', I('<path d="M4 12H20" stroke-width="2"/>')],
+    ['dashed', 'Discontinuo', I('<path d="M4 12h3M10.5 12h3M17 12h3" stroke-width="2"/>')],
+    ['dotted', 'Punteado', I('<path d="M5 12h.01M10 12h.01M15 12h.01M20 12h.01" stroke-width="3"/>')]]],
+  ['sloppy', 'Descuido', [
+    ['0', 'Arquitecto', I('<path d="M4 16L20 8"/>')],
+    ['1', 'Artista', I('<path d="M4 16c5-1 10-5 16-8"/>')],
+    ['2', 'Caricaturista', I('<path d="M4 17c3-7 5 2 8-3s5-4 8-6"/>')]]],
+];
+
+function buildBar() {
+  const bar = $('bar');
+  for (const [id, title, items] of GROUPS) {
+    const grp = document.createElement('div'), opts = document.createElement('div'), hid = $(id);
+    grp.className = 'grp' + (id === 'sloppy' ? ' sloppy' : ''); opts.className = 'opts';
+    grp.innerHTML = `<span>${title}</span>`;
+    const pick = (v) => { hid.value = v; mark(); draw(); };
+    const mark = () => opts.querySelectorAll('[data-v]').forEach(b => b.classList.toggle('on', b.dataset.v === hid.value));
+    const isColor = id === 'stroke' || id === 'bg';
+    for (const it of items) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      if (isColor) {
+        b.className = 'sw' + (it === 'transparent' ? ' none' : ''); b.style.background = it === 'transparent' ? '' : it;
+        b.dataset.v = it; b.title = it === 'transparent' ? 'Transparente' : it; b.onclick = () => pick(it);
+      } else {
+        b.className = 'opt'; b.dataset.v = it[0]; b.title = it[1]; b.innerHTML = it[2]; b.onclick = () => pick(it[0]);
+      }
+      opts.append(b);
+    }
+    if (isColor) {                                                         // custom color
+      const c = document.createElement('input');
+      c.type = 'color'; c.value = hid.value.startsWith('#') ? hid.value : '#ffffff'; c.title = 'Color personalizado';
+      c.oninput = () => pick(c.value);
+      opts.append(c);
+    }
+    mark(); grp.append(opts); bar.append(grp);
+  }
+}
+buildBar();
 
 setStep();
 </script>
